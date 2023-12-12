@@ -1,0 +1,341 @@
+---
+title: "Ajuste AR, MA y ARMA"
+output: pdf_document
+date: " "
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r librerias, echo=FALSE, warning=FALSE,error=FALSE}
+library(TSA)
+library(lmtest)
+library(forecast)
+library(tseries)
+```
+
+Se carga la serie de interes interbancario a un año medido de forma mensual, el gráfico se ve de la siguiente forma.
+
+```{r importacion, echo=FALSE}
+
+#######Tipos de interés interbancario a un año medido mensualmente
+tipos88 <- read.table("C:/Users/fabia/OneDrive/Documentos/UNAL/Series de tiempo/Serie lluvia/tipos88.dat", quote="\"", comment.char="")
+Intanual=tipos88$V5  #Tipo de interés Anual
+plot(as.ts(Intanual))
+
+```
+
+
+```{r identificación}
+###Se trabajará con los cambios relativos o serie de retornos
+camrelintanual=log(Intanual[2:length(Intanual)]/Intanual[1:(length(Intanual)-1)])
+sercamrelint=ts(camrelintanual,start=c(1988,01),frequency=12)
+int_anual=ts(Intanual,start=c(1988,01),frequency=12)
+par(mfrow = c(1, 2))
+plot(int_anual)
+#sercamrelint
+plot(sercamrelint)
+par(mfrow = c(2, 2))
+acf(sercamrelint,lag.max = length(sercamrelint))
+acf(sercamrelint,ci.type='ma',lag.max = length(sercamrelint)/4)##Rezago máximo q=4
+acf(sercamrelint,type='partial',lag.max = length(sercamrelint)/4)##Rezago máximo p=3
+pacf(sercamrelint,lag.max = length(sercamrelint)/4)
+###Se puede proponer un modelo ARMA(3,4)
+
+```
+Observando las gráficas de autocorrelación parcial y simple, se observa que los valores máximos asociados a los modelos que se pueden ajustar a la serie de retornos son p=3 para los coeficientes autorregresivos y q=4 para promedios móviles.
+
+
+```{r Estimacion todos, echo=FALSE}
+library(lmtest)
+ARPURO=Arima(sercamrelint,order=c(3,0,0),include.mean = TRUE)
+MAPURO=Arima(sercamrelint,order=c(0,0,4),include.mean = TRUE)
+ARMAMIXTO=Arima(sercamrelint,order=c(3,0,4),include.mean = TRUE)
+coeftest(ARPURO)
+coeftest(MAPURO)
+coeftest(ARMAMIXTO)
+```
+
+##Ajuste el modelo AR
+para iniciar la exploración del modelo a ajustar, se inicia un modelo que solo tenga coeficientes autorregresivos:
+
+```{r}
+coeftest(ARPURO)
+```
+Los p-valores asociados al segundo coeficiente, como a la media, no son significativos. Así que, se decide ajustar un modelo donde se fije en 0 el valor del coeficiente, como el de la media. 
+```{r estimacion valores fijos}
+ARPURO_fixed1=forecast::Arima(sercamrelint,order=c(3,0,0),include.mean = FALSE,fixed=c(NA,0,NA),method = c("CSS-ML"))
+coeftest(ARPURO_fixed1)
+summary(ARPURO_fixed1)
+```
+Ahora, que todos los coeficientes son significativos, se realiza el análisis de residuales:
+
+##Análisis de Residuales Para el modelo AR puro Serie interes
+
+```{r Análisis de Residuales Para el modelo AR puro Serie }
+# An?lisis de residuales
+residuales=ARPURO_fixed1$residuals
+plot(residuales)
+
+```
+Los residuales no presentan ninguna tendencia a simple vista. Es decir, que parecen definirse como ruido blanco.
+
+```{r Análisis de Residuales Para el modelo AR puro Serie interes graf, echo=FALSE}
+par(mfrow = c(1, 2))
+acf(residuales)
+acf(residuales^2)
+par(mfrow = c(1, 1))
+
+pacf(residuales)
+```
+Los residuales no parecen presentar autocorrelación. Asi que, el modelo explica correctamente los datos.  
+
+```{r Análisis de Residuales Para el modelo AR puro Serie interes}
+#Test de normalidad
+tseries::jarque.bera.test(residuales)
+#Test de autocorrelaci?n
+length(residuales)/4
+sqrt(length(residuales))
+sqrt(length(residuales))
+Box.test(residuales, lag =20 , type = "Ljung-Box", fitdf = 3)#No puedo Rechazar la hipótesis de no autocorrelación!
+```
+Vemos por el test Jarque Bera  y de Box-Ljung que los residuales ajustan a una distribución normal y ademas no presenta autocorrelación
+
+```{r Análisis de Residuales Para el modelo AR puro Serie interes2, echo=FALSE}
+###Estad?sticas CUSUM
+par(mfrow = c(1, 2))
+res=residuales
+cum=cumsum(res)/sd(res)
+N=length(res)
+cumq=cumsum(res^2)/sum(res^2)
+Af=0.948 ###Cuantil del 95% para la estad?stica cusum
+co=0.12531####Valor del cuantil aproximado para cusumsq para n/2
+LS=Af*sqrt(N)+2*Af*c(1:length(res))/sqrt(N)
+LI=-LS
+LQS=co+(1:length(res))/N
+LQI=-co+(1:length(res))/N
+plot(cum,type="l",ylim=c(min(LI),max(LS)),xlab="t",ylab="",main="CUSUM")
+lines(LS,type="S",col="red")
+lines(LI,type="S",col="red")
+#CUSUMSQ
+plot(cumq,type="l",xlab="t",ylab="",main="CUSUMSQ")                      
+lines(LQS,type="S",col="red")                                                                     
+lines(LQI,type="S",col="red")
+```
+A partir de la sumas acumulativas de los residuales, vemos que se ajustan dentro de las bandas de confianza, es decir el modelo tiene un buen comportamiento.
+
+```{r Rolling AR}
+h=1
+lserie=length(sercamrelint)
+ntrain=trunc(length(sercamrelint)*0.8)
+ntrain
+time(sercamrelint)
+time(sercamrelint)[ntrain]###Me entrega la ultima fecha de la posici?n ntrain
+train=window(sercamrelint,end=c(1999,4))
+test=window(sercamrelint,start=c(1999,5))
+length(train)
+ntest=length(test)
+ntest
+fcmat=matrix(0,nrow=ntest,ncol=h)
+for(i in 1:ntest)
+{
+  x=window(sercamrelint,end=c(1999,4)+(i-1)/12)
+  print(length(x))
+  refit=Arima(sercamrelint,order=c(3,0,0),include.mean = FALSE,fixed=c(NA,0,NA),method = c("CSS-ML"))
+  fcmat[i,]=test[i]-forecast(refit,h=h)$mean
+}
+fcmat
+ECM=mean(fcmat^2)
+ECM
+```
+
+
+
+##Ajuste el modelo MA
+
+Se ajusta un MA(4), por el análisis de coeficientes, podemos ver que todos son signifivativos.
+
+```{r estimacion valores fijos MA}
+coeftest(MAPURO)
+
+MAPURO_fixed1=forecast::Arima(sercamrelint,order=c(0,0,4),include.mean = FALSE,method = c("CSS-ML"))
+coeftest(MAPURO_fixed1)
+summary(MAPURO_fixed1)
+####Todas son significativas
+```
+
+Como todos son significativos podemos preceder al análisis de residuales
+
+```{r Análisis de Residuales Para el modelo AR puro Serie interes MA}
+# An?lisis de residuales
+residuales=MAPURO_fixed1$residuals
+par(mfrow = c(2, 2))
+plot(residuales)
+acf(residuales)
+acf(residuales^2)
+pacf(residuales)
+#Test de normalidad
+tseries::jarque.bera.test(residuales)
+#Test de autocorrelaci?n
+length(residuales)/4
+sqrt(length(residuales))
+Box.test(residuales, lag =20 , type = "Ljung-Box", fitdf = 4)#No puedo Rechazar la hipótesis de no autocorrelación!
+
+
+###Estad?sticas CUSUM
+par(mfrow = c(1, 2))
+res=residuales
+cum=cumsum(res)/sd(res)
+N=length(res)
+cumq=cumsum(res^2)/sum(res^2)
+Af=0.948 ###Cuantil del 95% para la estad?stica cusum
+co=0.12531####Valor del cuantil aproximado para cusumsq para n/2
+LS=Af*sqrt(N)+2*Af*c(1:length(res))/sqrt(N)
+LI=-LS
+LQS=co+(1:length(res))/N
+LQI=-co+(1:length(res))/N
+plot(cum,type="l",ylim=c(min(LI),max(LS)),xlab="t",ylab="",main="CUSUM")
+lines(LS,type="S",col="red")
+lines(LI,type="S",col="red")
+#CUSUMSQ
+plot(cumq,type="l",xlab="t",ylab="",main="CUSUMSQ")                      
+lines(LQS,type="S",col="red")                                                                       
+lines(LQI,type="S",col="red")
+```
+Vemos que tanto los supuestos se cumplen y que al ver las sumas acumulativas estan dentro de las bandas, podemos decir que el modelo se ajusta bien. 
+
+
+```{r Rolling MA}
+h=1
+lserie=length(sercamrelint)
+ntrain=trunc(length(sercamrelint)*0.8)
+ntrain
+time(sercamrelint)
+time(sercamrelint)[ntrain]###Me entrega la ultima fecha de la posici?n ntrain
+train=window(sercamrelint,end=c(1999,4))
+test=window(sercamrelint,start=c(1999,5))
+length(train)
+ntest=length(test)
+ntest
+fcmat=matrix(0,nrow=ntest,ncol=h)
+for(i in 1:ntest)
+{
+  x=window(sercamrelint,end=c(1999,4)+(i-1)/12)
+  print(length(x))
+  refit=Arima(sercamrelint,order=c(0,0,4),include.mean = FALSE,method = c("CSS-ML"))
+  fcmat[i,]=test[i]-forecast(refit,h=h)$mean
+}
+fcmat
+ECM=mean(fcmat^2)
+ECM
+```
+
+Vemos que al hacer el rolling, los ECM son bajos.
+
+
+##Ajuste el modelo ARMA
+
+```{r estimacion valores fijos ARMA}
+coeftest(ARMAMIXTO)
+####Ninguna es significativa
+ARMAMIXTO_fixed1=forecast::Arima(sercamrelint,order=c(3,0,4),include.mean = FALSE,method = c("CSS-ML"))
+coeftest(ARMAMIXTO_fixed1)
+summary(ARMAMIXTO_fixed1)
+#Con un coeficiente ar menos
+ARMAMIXTO_fixed1=forecast::Arima(sercamrelint,order=c(3,0,3),include.mean = TRUE,method = c("CSS-ML"))
+coeftest(ARMAMIXTO_fixed1)
+summary(ARMAMIXTO_fixed1)
+#Con un coeficiente ma menos
+ARMAMIXTO_fixed1=forecast::Arima(sercamrelint,order=c(2,0,3),include.mean = TRUE,method = c("CSS-ML"))
+coeftest(ARMAMIXTO_fixed1)
+summary(ARMAMIXTO_fixed1)
+
+#Con un coeficiente ar menos
+ARMAMIXTO_fixed1=forecast::Arima(sercamrelint,order=c(1,0,3),include.mean = TRUE,method = c("CSS-ML"))
+coeftest(ARMAMIXTO_fixed1)
+summary(ARMAMIXTO_fixed1)
+
+####
+ARMAMIXTO_fixed1=forecast::Arima(sercamrelint,order=c(1,0,3),include.mean = TRUE,method = c("CSS-ML"),fixed=c(NA,0,0,NA,NA))
+coeftest(ARMAMIXTO_fixed1)
+summary(ARMAMIXTO_fixed1)
+
+ARMAMIXTO_fixed1=forecast::Arima(sercamrelint,order=c(1,0,3),include.mean = TRUE,method = c("CSS-ML"),fixed=c(NA,0,0,NA,0))
+coeftest(ARMAMIXTO_fixed1)
+summary(ARMAMIXTO_fixed1)
+####Todas son significativas
+
+```
+
+
+Con el modelo ARMA(1,3) con sus coeficientes signitivativos, hacemos el análisis de residuales
+
+```{r Análisis de Residuales Para el modelo AR puro Serie interes ARMA}
+# An?lisis de residuales
+residuales=ARMAMIXTO_fixed1$residuals
+par(mfrow = c(2, 2))
+plot(residuales)
+acf(residuales)
+acf(residuales^2)
+pacf(residuales)
+#Test de normalidad
+tseries::jarque.bera.test(residuales)
+#Test de autocorrelaci?n
+length(residuales)/4
+sqrt(length(residuales))
+Box.test(residuales, lag =20 , type = "Ljung-Box", fitdf = 4)#No puedo Rechazar la hipótesis de no autocorrelación!
+
+
+###Estad?sticas CUSUM
+par(mfrow = c(1, 2))
+res=residuales
+cum=cumsum(res)/sd(res)
+N=length(res)
+cumq=cumsum(res^2)/sum(res^2)
+Af=0.948 ###Cuantil del 95% para la estad?stica cusum
+co=0.12531####Valor del cuantil aproximado para cusumsq para n/2
+LS=Af*sqrt(N)+2*Af*c(1:length(res))/sqrt(N)
+LI=-LS
+LQS=co+(1:length(res))/N
+LQI=-co+(1:length(res))/N
+plot(cum,type="l",ylim=c(min(LI),max(LS)),xlab="t",ylab="",main="CUSUM")
+lines(LS,type="S",col="red")
+lines(LI,type="S",col="red")
+#CUSUMSQ
+plot(cumq,type="l",xlab="t",ylab="",main="CUSUMSQ")                      
+lines(LQS,type="S",col="red")                                                                       
+lines(LQI,type="S",col="red")
+```
+Vemos que tanto los supuestos se cumplen y que al ver las sumas acumulativas estan dentro de las bandas, podemos decir que el modelo se ajusta bien
+
+```{r Rolling ARMA}
+h=1
+lserie=length(sercamrelint)
+ntrain=trunc(length(sercamrelint)*0.8)
+ntrain
+time(sercamrelint)
+time(sercamrelint)[ntrain]###Me entrega la ultima fecha de la posici?n ntrain
+train=window(sercamrelint,end=c(1999,4))
+test=window(sercamrelint,start=c(1999,5))
+length(train)
+ntest=length(test)
+ntest
+fcmat=matrix(0,nrow=ntest,ncol=h)
+for(i in 1:ntest)
+{
+  x=window(sercamrelint,end=c(1999,4)+(i-1)/12)
+  print(length(x))
+  refit=Arima(sercamrelint,order=c(1,0,3),include.mean = TRUE,method = c("CSS-ML"),fixed=c(NA,0,0,NA,0))
+  fcmat[i,]=test[i]-forecast(refit,h=h)$mean
+}
+fcmat
+ECM=mean(fcmat^2)
+ECM
+```
+
+Vemos que al hacer el rolling, los ECM son bajos.
+
+En conclución vemos que el ECM de los tres modelos propuestos, son respectivamente MA=0.039, AR=0.0034 y ARMA=0.0038, es decir que el mejor modelo es el AR. 
+
