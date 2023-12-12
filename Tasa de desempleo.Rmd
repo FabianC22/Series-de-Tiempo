@@ -1,0 +1,177 @@
+---
+title: "Tasa de desempleo en Colombia"
+author: "Fabian Tiguaque Castellanos"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(tseries)
+library(forecast)
+library(xts)
+setwd("C:/Users/fabia/OneDrive/Documentos/UNAL/Series de tiempo")
+library(readxl)
+tasa_desempleo <- read_excel("tasa_desempleo.xlsx")
+
+```
+
+Se presenta la siguiente serie de tiempo en la cual se análisa la tasa de desempleo en Colombia desde el año 2001 hasta el 2021; la tasa de desempleo es un índice que nos dice el porcentaje de desempleo mensual. 
+
+```{r}
+ts_desempleo<-ts(rev(tasa_desempleo$`Tasa de desempleo (%)`), start = c(2001,01), frequency = 12, end = c(2021,12))
+xts_desempleo = as.xts(ts_desempleo)
+plot(xts_desempleo, main = "Tasa de desempleo",xlab="Tiempo")
+```
+Vemos graficamente que la serie presenta  una leve tendencia decreciente y vemos que presenta algunos picos que nos pueden decir que tal vez tenga una compotente estacional o ciclica, ademas tambien ´podemos ver que la varianza condicional no es constante. 
+
+
+
+En la función de auto correlación simple vemos que tiene la varianza marginal no es constante y es necesario estabilizarla, ademas en la autocorrelación parcial... 
+```{r}
+acf(ts_desempleo,main="",sub="Figura 1: Función de Autocorrelación Simple", ci.type ="ma")
+pacf(ts_desempleo,main="",sub="Figura 1: Función de Autocorrelación Parcial")
+```
+A partir de la función de autocorelación simple, queremos saber si es necesario realizar una transformación para estabilizar la varianza marginal, para esto hacemos una transformación de box-cox
+
+```{r echo=TRUE}
+lambda=forecast::BoxCox.lambda(ts_desempleo, method = "guerrero", lower = -1, upper = 3)
+lambda
+
+ts_desempleo_One=forecast::BoxCox(ts_desempleo,lambda=lambda)
+plot(forecast::BoxCox(ts_desempleo_One,lambda=lambda))
+```
+```{r}
+lambda1=forecast::BoxCox.lambda(ts_desempleo_One, method = "guerrero", lower = -1, upper = 3)
+lambda1
+trans_ts_desempleo=forecast::BoxCox(ts_desempleo_One,lambda=lambda1)
+plot(forecast::BoxCox(ts_desempleo_One,lambda=lambda1))
+```
+
+```{r echo=FALSE}
+plot(trans_ts_desempleo, ylab = "Serie transformada")
+```
+Ahora se quiere se eliminaria la tendencia de la serie transformada por Box-Cox.
+
+```{r echo=FALSE}
+library(forecast)
+ndiffs(trans_ts_desempleo)
+dts_desempleo<-diff(trans_ts_desempleo)
+d_xts_desempleo = as.xts(dts_desempleo) #queda esta >> dts_desempleo 
+ndiffs(dts_desempleo)
+```
+Al realizar la diferenciación de la serie podemos en el siguiente plot que los valores fluctuan entre 0, es decir que la media se estabilizo en ese valor.
+```{r echo=FALSE}
+plot(d_xts_desempleo, main = "Tasa desempleo diferenciada",xlab="Tiempo")
+```
+```{r echo=FALSE}
+acf(dts_desempleo, ci.type="ma", lag.max = 50)
+pacf(dts_desempleo, lag.max = 50)
+```
+```{r echo=FALSE}
+library(tsibble)
+library(ggplot2)
+library(fpp3)
+tbl_ts_desempleo<- as_tsibble(dts_desempleo)
+tbl_ts_desempleo%>%select(value)%>%gg_season(period = "year")
+tbl_ts_desempleo%>%select(value)%>%gg_subseries(period = "year")
+```
+
+
+```{r include=FALSE}
+tbl_desempleo<-as_tibble(tbl_ts_desempleo)
+tbl_desempleo$index<-as.Date(tbl_desempleo$index)
+tbl_desempleo
+```
+
+```{r echo=FALSE}
+library(timetk)
+tbl_desempleo%>%plot_seasonal_diagnostics(.date_var = index,.value = value,.feature_set = c("month.lbl"),.geom="boxplot") 
+```
+
+Finalizando, realizamos un períodograma:
+
+```{r echo=FALSE}
+spectrum(tbl_desempleo$value,log='no')
+abline(v=1/12, lty=2,col="red")
+abline(v=2/12, lty=2,col="blue")
+abline(v=3/12, lty=2,col=4)
+abline(v=4/12, lty=2,col=7)
+```
+
+Vemos como se producen picos de manera períodica, con la línea roja en el valor $1/12$ que es la frecuencia de la serie, y el valor azul en $1/6$, esto es multiplos racionales de la frecuencia.
+
+Ahora asumiremos que la estacionalidad se presenta de manera estocástica. Continuamos con la metodología, es decir, continuaremos con la serie diferenciada y de ahí partirá nuestro análisis.
+
+
+```{r echo=TRUE}
+ndiffs(dts_desempleo) #si
+```
+
+Al realizar el cálculo con la función nsdiffs vemos que es necesario realizar una diferencia estacional.
+
+Realizamos la diferencia estacional para el periodo $s=12$ y estudiamos el ACF y PACF:
+
+#---------------------
+
+Como podemos ver en el ACF el rezago en $h=s$ resulta significativo y para múltiplos de s se va para 0. En el PACF vemos que los rezagos en $h=s,h=2s,h=3s$ resultan significativos, así como los rezagos cerca de estos, por tanto $P=3$,$Q=1$ son los parámetros candidatos.
+
+Si analizamos los tres primeros rezagos en el PACF, estos resultan significativos, y en el ACF solo el primero lo es, por tanto $p=3,q=1$ son los parámetros restantes del modelo.
+
+Verificamos si la serie necesita una segunda diferencia estacional.
+
+
+
+#-------------
+
+
+```{r}
+
+HWAP_inic=stats::HoltWinters(dts_desempleo,alpha=NULL,beta=FALSE,gamma=FALSE)
+plot(HWAP_inic)
+forecast::forecast(HWAP_inic,h=12,level =0.95,lambda =  1.015385)
+plot(forecast::forecast(HWAP_inic,h=12,level =0.95,lambda =  1.015385))
+```
+
+
+```{r}
+HWAP=stats::HoltWinters(dts_desempleo,seasonal="additive") ##Puede establecer beta=F y/0 gamma=F, además el objeto debe ser de clase ts.
+plot(HWAP)
+plot(forecast::forecast(HWAP,h=12,level =0.95,lambda =  1.015385))
+
+ajustados=fitted(HWAP)
+plot(ajustados)
+ajustados
+HWAP
+
+
+predictionHWAP_1=forecast::forecast(HWAP,h=12,level =0.95,lambda =  1.015385)
+predictionHWAP_1
+plot(predictionHWAP_1)
+predictionHWAP_2=predict(HWAP,n.ahead = 12, prediction.interval = T, level = 0.95)
+predictionHWAP_2=forecast::InvBoxCox(predictionHWAP_2,lambda= 1.015385)
+predictionHWAP_2
+```
+
+```{r}
+
+HWAP_1=forecast::hw(dts_desempleo,seasonal="additive",damped=TRUE)  ###También se puede usar holt
+plot(HWAP_1)
+#####
+summary(HWAP_1)
+####
+```
+```{r}
+
+tsibble_desempleo=as_tsibble(dts_desempleo)
+####Usando objeto tsibble con ETS de fable, "A":additive "M": multiplicative, "N":nada, "Ad" "Md" damped. Note que hay algunos parámetros que se pueden establecer en cero
+ajustepass=tsibble_desempleo%>%
+  model(ETS(value~ error("A")+trend("A")+season("A")))
+
+pronostico=ajustepass%>%
+  fabletools::forecast(h=12)
+pronostico
+
+pronostico%>%autoplot(tsibble_desempleo)+geom_line(aes(y=.fitted),col="#D55E00",data=augment(ajustepass))+labs(y=" ",title="Pronóstico u ajustados")+guides(colour="none")
+
+```
+
