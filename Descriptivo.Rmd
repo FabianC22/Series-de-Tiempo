@@ -1,0 +1,225 @@
+---
+title: "Parcial final-TotalUK"
+author: "Fabian Tiguaque Castellanos, Raul Eduardo Acevedo"
+date: "2023-06-13"
+output:  html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tseries)
+library(forecast)
+library(xts)
+library(tsibble)
+library(ggplot2)
+library(fpp3)
+library(readxl)
+library(TSstudio)
+library(timetk)
+library(tidyverse)
+library(tibble)
+library(tseries)
+library(tsibble)
+library(forecast)
+library(lmtest)
+
+setwd("C:/Users/fabia/OneDrive/Documentos/UNAL/Series de tiempo/Parcial final")
+tasa_desempleo <- read_excel("DesempleoUK.xlsx",sheet = "TotalUK")
+```
+```{r}
+ts_desempleo<-ts(rev(tasa_desempleo$Tasa_Desempleo), start = c(1993,01), frequency = 12, end = c(2019,12))
+xts_desempleo = as.xts(ts_desempleo)
+plot(xts_desempleo, main = "Tasa de desempleo",xlab="Tiempo")
+```
+```{r}
+acf(ts_desempleo,main="",sub="Figura 1: Función de Autocorrelación Simple")
+pacf(ts_desempleo,main="",sub="Figura 1: Función de Autocorrelación Parcial")
+```
+### Estabilización de la varianza marginal
+
+```{r}
+lambda=forecast::BoxCox.lambda(ts_desempleo, method = "guerrero", lower = -1, upper = 3)
+lambda
+
+ts_desempleo_One=forecast::BoxCox(ts_desempleo,lambda=lambda)
+plot(forecast::BoxCox(ts_desempleo_One,lambda=lambda))
+```
+### Eliminación de la tendencia
+```{r}
+
+nsdiffs(ts_desempleo_One) # numero de diferenciaciones
+dts_desempleo1<-diff(ts_desempleo_One) # 
+d_xts_desempleo1 = as.xts(dts_desempleo1) #queda esta >> dts_desempleo 
+nsdiffs(dts_desempleo1)  # numero de diferenciaciones
+```
+```{r}
+dts_desempleo<-diff(dts_desempleo1) # 
+d_xts_desempleo = as.xts(dts_desempleo) #queda esta >> dts_desempleo 
+nsdiffs(dts_desempleo)  #
+```
+
+```{r}
+plot(d_xts_desempleo, main = "Tasa desempleo diferenciada",xlab="Tiempo")
+```
+
+
+
+
+```{r}
+acf(dts_desempleo, lag.max = 50)
+pacf(dts_desempleo, lag.max = 50)
+```
+### Detección de ciclos
+```{r}
+tbl_ts_desempleo<- as_tsibble(dts_desempleo)
+tbl_ts_desempleo%>%select(value)%>%gg_season(period = "year")
+tbl_ts_desempleo%>%select(value)%>%gg_subseries(period = "year")
+```
+```{r}
+tbl_desempleo<-as_tibble(tbl_ts_desempleo)
+tbl_desempleo$index<-as.Date(tbl_desempleo$index)
+tbl_desempleo
+```
+```{r}
+tbl_desempleo%>%plot_seasonal_diagnostics(.date_var = index,.value = value,.feature_set = c("month.lbl"),.geom="boxplot") 
+```
+### Periodograma
+
+```{r}
+spectrum(tbl_desempleo$value,log='no')
+abline(v=1/12, lty=2,col="red")
+abline(v=2/12, lty=2,col="blue") ### periodo cada 6 meses
+abline(v=3/12, lty=2,col=4)
+abline(v=4/12, lty=2,col=7)
+```
+
+### SARIMA
+
+```{r}
+ndiffs(dts_desempleo)
+```
+```{r}
+#####Prueba de Dickey Fuller###### Para raiz unitaria
+#ar(dts_desempleo)
+tseries::adf.test(dts_desempleo,k=12) ## Dickey-Fuller Test
+```
+Para un $k=6$,Es decir como $p-valor=0.01$ quiere decir que se rechaza la hipotesis nula y no tiene raiz unitaria; es un indicio para decir que puede ser una serie estacionaria. 
+
+
+```{r}
+plot(dts_desempleo)
+```
+
+```{r}
+library(uroot)
+require(forecast)
+######Diferencia Estacional(continuación AirPassengers)#######
+monthplot(dts_desempleo)
+acf(dts_desempleo,lag.max = 36)
+spectrum(dts_desempleo)
+nsdiffs(dts_desempleo)
+```
+
+```{r}
+##Autocorrelogramas
+#x11()
+#acf(dts_desempleo)
+acf(dts_desempleo,lag.max = 48, ci.type='ma')# q=0,1,12 Q=0,1
+pacf(dts_desempleo,lag.max = 48) # p=0,1,12, P=0,1
+#SARIMA(p=0,d=1,q=1)x(P=0,D=1,Q=1)s=6
+
+```
+```{r}
+
+modelos <- vector("list", 10)
+
+for (p in 2:6) {
+  for (q in 0:3) {
+    modelos[[paste0("SARIMA(", p, ",", q, ")")]] <- forecast::Arima(ts_desempleo, c(p, 1, q),
+               seasonal = list(order = c(1, 2, 1), period = 6),lambda = lambda)
+  }
+}
+
+```
+
+```{r}
+AIC(modelos$`SARIMA(2,0)`)
+AIC(modelos$`SARIMA(2,1)`)
+AIC(modelos$`SARIMA(2,2)`)
+AIC(modelos$`SARIMA(2,3)`)
+AIC(modelos$`SARIMA(3,0)`)
+AIC(modelos$`SARIMA(3,1)`)
+AIC(modelos$`SARIMA(3,2)`)
+AIC(modelos$`SARIMA(3,3)`)
+AIC(modelos$`SARIMA(4,0)`)
+AIC(modelos$`SARIMA(4,1)`)
+AIC(modelos$`SARIMA(4,2)`)
+AIC(modelos$`SARIMA(4,3)`)
+AIC(modelos$`SARIMA(5,0)`)
+AIC(modelos$`SARIMA(5,1)`)
+AIC(modelos$`SARIMA(5,2)`)
+AIC(modelos$`SARIMA(5,3)`)
+AIC(modelos$`SARIMA(6,0)`)
+AIC(modelos$`SARIMA(6,1)`)
+AIC(modelos$`SARIMA(6,2)`)
+AIC(modelos$`SARIMA(6,3)`)
+```
+```{r}
+
+AIC(modelos$`SARIMA(2,2)`)
+modelo1=modelos$`SARIMA(2,2)`
+
+coeftest(modelo1)
+```
+### Análisis de residuales 
+```{r}
+## Análisis de residuales
+#x11()
+residuales <- modelo1$residuals
+plot(residuales)
+acf(residuales,lag.max = 24)
+pacf(residuales,lag.max = 24)
+
+```
+
+```{r}
+#Test de autocorrelaci?n
+Box.test(residuales, lag = (length(residuales)/4), type = "Ljung-Box", fitdf = 2)
+######Análisis de Outliers
+#Test de normalidad
+jarque.bera.test(residuales)
+
+```
+
+```{r}
+###Estad?ticas CUSUM
+res=residuales
+cum=cumsum(res)/sd(res)
+N=length(res)
+cumq=cumsum(res^2)/sum(res^2)
+Af=0.948 ###Cuantil del 95% para la estad?stica cusum
+co=0.14422####Valor del cuantil aproximado para cusumsq para n/2
+LS=Af*sqrt(N)+2*Af*c(1:length(res))/sqrt(N)
+LI=-LS
+LQS=co+(1:length(res))/N
+LQI=-co+(1:length(res))/N
+#par(mfrow=c(2,1))
+plot(cum,type="l",ylim=c(min(LI),max(LS)),xlab="t",ylab="",main="CUSUM")
+lines(LS,type="S",col="red")
+lines(LI,type="S",col="red")
+#CUSUM Square
+plot(cumq,type="l",xlab="t",ylab="",main="CUSUMSQ")                      
+lines(LQS,type="S",col="red")                                                                           
+lines(LQI,type="S",col="red")
+
+```
+```{r}
+### pronostico
+Pronosticos=forecast(modelo1,h=3,level=0.95)
+plot(Pronosticos)
+predic<-predict(modelo1,n.ahead=12)
+plot(predic$pred)
+```
