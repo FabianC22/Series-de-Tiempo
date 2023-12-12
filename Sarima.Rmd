@@ -1,0 +1,172 @@
+---
+title: "Sarima"
+author: "Fabian Castellanos"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(urca)
+library(forecast)
+library(tseries)
+library(lmtest)
+library(uroot)
+library(fUnitRoots)
+library(sarima)
+require("PolynomF")
+```
+```{r}
+library(readxl)
+setwd("C:/Users/fabia/OneDrive/Documentos/UNAL/Series de tiempo")
+tasa_desempleo <- read_excel("tasa_desempleo.xlsx")
+```
+```{r}
+ts_desempleo<-ts(rev(tasa_desempleo$`Tasa de desempleo (%)`), start = c(2001,01), frequency = 12, end = c(2021,12))
+xts_desempleo = as.xts(ts_desempleo)
+plot(xts_desempleo, main = "Tasa de desempleo",xlab="Tiempo")
+```
+
+### Estabilización de la varianza marginal
+
+```{r}
+lambda=forecast::BoxCox.lambda(ts_desempleo, method = "guerrero", lower = -1, upper = 3)
+lambda
+
+ts_desempleo_One=forecast::BoxCox(ts_desempleo,lambda=lambda)
+plot(forecast::BoxCox(ts_desempleo_One,lambda=lambda))
+```
+### Eliminación de la tendencia
+
+```{r}
+ndiffs(ts_desempleo_One) # numero de diferenciaciones
+dts_desempleo<-diff(ts_desempleo_One) # 
+d_xts_desempleo = as.xts(dts_desempleo) #queda esta >> dts_desempleo 
+ndiffs(dts_desempleo)  # numero de diferenciaciones
+```
+```{r}
+acf(dts_desempleo, lag.max = 50)
+pacf(dts_desempleo, lag.max = 50)
+```
+
+
+
+
+```{r}
+#####Prueba de Dickey Fuller###### Para raiz unitaria
+#ar(dts_desempleo)
+tseries::adf.test(dts_desempleo,k=6) ## Dickey-Fuller Test
+```
+```{r}
+ddts_desempleo=diff(dts_desempleo,lag=1)
+plot(dts_desempleo)
+plot(ddts_desempleo)
+ar(ddts_desempleo)
+```
+```{r}
+tseries::adf.test(dts_desempleo,k = 15)  ###No se debe diferenciar más###
+fUnitRoots::adfTest(dts_desempleo,lags = 12,type='nc') 
+df_ur=urca::ur.df(dts_desempleo, lags = 15)
+df_ur
+```
+```{r}
+library(uroot)
+require(forecast)
+######Diferencia Estacional(continuación AirPassengers)#######
+monthplot(dts_desempleo)
+acf(dts_desempleo,lag.max = 36)
+spectrum(dts_desempleo)
+nsdiffs(dts_desempleo)
+```
+```{r}
+Ddts_desempleo=diff(dts_desempleo,lag=12)###lag=s
+nsdiffs(Ddts_desempleo)
+```
+```{r}
+
+plot(Ddts_desempleo)
+monthplot(Ddts_desempleo)
+acf(Ddts_desempleo,lag.max = 36)
+spectrum(Ddts_desempleo)
+nsdiffs(Ddts_desempleo)
+
+```
+```{r}
+##Autocorrelogramas
+#x11()
+acf(Ddts_desempleo)
+acf(Ddts_desempleo,lag.max = 48, ci.type='ma')# q=0,1,12 Q=0,1
+pacf(Ddts_desempleo,lag.max = 48) # p=0,1,12, P=0,1
+#SARIMA(p=0,d=1,q=1)x(P=0,D=1,Q=1)s=6
+
+```
+
+```{r}
+ts_desempleo<-ts(rev(tasa_desempleo$`Tasa de desempleo (%)`), start = c(2001,01), frequency = 12, end = c(2021,12))
+
+# q=0,1,12 Q=0,1
+# p=0,1,12, P=0,1
+#SARIMA(p=0,d=1,q=1)x(P=0,D=1,Q=1) s=6
+modelo = Arima(ts_desempleo, c(0, 1, 1),
+               seasonal = list(order = c(0, 1, 1), period = 6),lambda = lambda)
+coeftest(modelo)
+```
+```{r}
+## Análisis de residuales
+#x11()
+residuales <- modelo$residuals
+plot(residuales)
+acf(residuales,lag.max = 24)
+pacf(residuales,lag.max = 24)
+
+```
+```{r}
+#Test de autocorrelaci?n
+Box.test(residuales, lag = (length(residuales)/4), type = "Ljung-Box", fitdf = 2)
+######Análisis de Outliers
+#Test de normalidad
+jarque.bera.test(residuales)
+
+```
+```{r}
+###Estad?ticas CUSUM
+res=residuales
+cum=cumsum(res)/sd(res)
+N=length(res)
+cumq=cumsum(res^2)/sum(res^2)
+Af=0.948 ###Cuantil del 95% para la estad?stica cusum
+co=0.14422####Valor del cuantil aproximado para cusumsq para n/2
+LS=Af*sqrt(N)+2*Af*c(1:length(res))/sqrt(N)
+LI=-LS
+LQS=co+(1:length(res))/N
+LQI=-co+(1:length(res))/N
+#par(mfrow=c(2,1))
+plot(cum,type="l",ylim=c(min(LI),max(LS)),xlab="t",ylab="",main="CUSUM")
+lines(LS,type="S",col="red")
+lines(LI,type="S",col="red")
+#CUSUM Square
+plot(cumq,type="l",xlab="t",ylab="",main="CUSUMSQ")                      
+lines(LQS,type="S",col="red")                                                                           
+lines(LQI,type="S",col="red")
+
+```
+```{r}
+### pronostico
+
+
+Pronosticos=forecast(modelo,h=6,level=0.95)
+plot(Pronosticos)
+predic<-predict(modelo,n.ahead=12)
+plot(predic$pred)
+```
+
+
+
+
+
+
+
+
+
+
+
+
